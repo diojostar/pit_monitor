@@ -14,13 +14,15 @@ Env vars:
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 API_URL = "https://api.fortnite.com/ecosystem/v1/islands/{}"
 STATE_FILE = Path("state.json")
-FAILS_BEFORE_ALERT = 2  # consecutive "not found" results before pinging
+RETRIES = 2            # extra checks right after a "not found", before pinging
+RETRY_DELAY_SEC = 20   # pause between those checks
 USER_AGENT = "PitMonitor/1.0"
 
 
@@ -72,7 +74,7 @@ def load_state() -> dict:
     try:
         return json.loads(STATE_FILE.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"status": "up", "fails": 0}
+        return {"status": "up"}
 
 
 def main() -> None:
@@ -97,22 +99,28 @@ def main() -> None:
         return  # API hiccup: don't alert, don't change state
 
     state = load_state()
-    new_state = dict(state)
 
-    if result == "up":
-        if state["status"] == "down":
-            send_discord(webhook, user_id, f"🟢 `{code}` is back in discovery ({details}).")
-        new_state = {"status": "up", "fails": 0}
-    elif state["status"] != "down":  # already alerted -> nothing to do
-        new_state["fails"] = state.get("fails", 0) + 1
-        if new_state["fails"] >= FAILS_BEFORE_ALERT and state["status"] != "down":
-            send_discord(
-                webhook,
-                user_id,
-                f"🔴 `{code}` is gone from discovery — probably banned or unlisted. "
-                f"Check Creator Portal.\n`{details}`",
-            )
-            new_state["status"] = "down"
+    # Island just disappeared: re-check right away to rule out a one-off glitch.
+    if result == "down" and state["status"] != "down":
+        for attempt in range(1, RETRIES + 1):
+            time.sleep(RETRY_DELAY_SEC)
+            retry_result, retry_details = check_island(code)
+            print(f"retry {attempt}/{RETRIES}: {retry_result} ({retry_details})")
+            if retry_result == "up":
+                result, details = retry_result, retry_details
+                break
+
+    new_state = {"status": "up" if result == "up" else "down"}
+
+    if new_state["status"] == "up" and state["status"] == "down":
+        send_discord(webhook, user_id, f"🟢 `{code}` is back in discovery ({details}).")
+    elif new_state["status"] == "down" and state["status"] != "down":
+        send_discord(
+            webhook,
+            user_id,
+            f"🔴 `{code}` is gone from discovery — probably banned or unlisted. "
+            f"Check Creator Portal.\n`{details}`",
+        )
 
     if new_state != state or not STATE_FILE.exists():
         STATE_FILE.write_text(json.dumps(new_state) + "\n")
