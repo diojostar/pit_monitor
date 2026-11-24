@@ -31,7 +31,6 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_REPORT_WEBHOOK_URL: ${{ secrets.DISCORD_REPORT_WEBHOOK_URL }}
           DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
           ISLAND_CODE: ${{ vars.ISLAND_CODE }}
 
