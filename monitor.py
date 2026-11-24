@@ -6,12 +6,11 @@ delisted or unlisted.
 
 Modes (MODE env var):
   check   ping you once when the island disappears, once when it's back
-  report  short status + last-hour stats to the report channel (no ping)
-  test    test message to the alerts channel with the current status
+  report  short status + last-hour stats (no ping)
+  test    test message with the current status
 
 Env vars:
-  DISCORD_WEBHOOK_URL         alerts channel webhook (secret)
-  DISCORD_REPORT_WEBHOOK_URL  report channel webhook (secret, for MODE=report)
+  DISCORD_WEBHOOK_URL         channel webhook (secret)
   DISCORD_USER_ID             your Discord user ID (gets pinged on alerts)
   ISLAND_CODE                 e.g. 1234-5678-9012
   MODE                        check | report | test (default: check)
@@ -110,8 +109,7 @@ def fmt(n) -> str:
     return f"{int(n):,}"
 
 
-def run_report(code: str, result: str, details: str) -> None:
-    webhook = env("DISCORD_REPORT_WEBHOOK_URL")
+def run_report(webhook: str, code: str, result: str, details: str) -> None:
     icon = {"up": "🟢", "down": "🔴", "error": "🟡"}[result]
     lines = [f"📊 **Hourly report** — `{code}`", f"{icon} Status: **{result}** — {details}"]
 
@@ -136,15 +134,15 @@ def main() -> None:
     code = env("ISLAND_CODE")
     mode = (os.environ.get("MODE") or "check").strip().lower()
 
+    webhook = env("DISCORD_WEBHOOK_URL")
+    user_id = env("DISCORD_USER_ID")
+
     result, details = check_island(code)
     print(f"[{mode}] {code}: {result} ({details})")
 
     if mode == "report":
-        run_report(code, result, details)
+        run_report(webhook, code, result, details)
         return
-
-    webhook = env("DISCORD_WEBHOOK_URL")
-    user_id = env("DISCORD_USER_ID")
 
     if mode == "test":
         icon = {"up": "🟢", "down": "🔴", "error": "🟡"}[result]
