@@ -22,7 +22,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 API_BASE = "https://api.fortnite.com/ecosystem/v1/islands/{}"
 STATE_FILE = Path("state.json")
@@ -60,22 +62,53 @@ def check_island(code: str) -> tuple[str, str]:
         return "error", f"Network error: {e}"
 
 
-def last_hour_metrics(code: str) -> dict:
-    """Latest non-empty hourly value for each metric. Empty dict on failure."""
+METRIC_KEYS = ("uniquePlayers", "plays", "peakCCU", "minutesPlayed",
+               "averageMinutesPerPlayer", "favorites", "recommendations")
+LOCAL_TZ = "Europe/Kyiv"
+
+
+def parse_ts(ts: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+
+
+def last_hour_metrics(code: str) -> tuple[datetime | None, dict]:
+    """All metrics from the latest *complete* hour that has data.
+    Returns (hour_start_utc, {metric: value}); (None, {}) on failure."""
     try:
         data = api_get(API_BASE.format(code) + "/metrics/hour")
     except Exception as e:  # stats are nice-to-have; never break the report
         print(f"metrics error: {e}")
-        return {}
-    result = {}
-    for key in ("uniquePlayers", "plays", "peakCCU", "minutesPlayed",
-                "averageMinutesPerPlayer", "favorites", "recommendations"):
-        points = data.get(key) or []
-        points = [p for p in points if isinstance(p, dict) and p.get("value") is not None]
-        if points:
-            latest = max(points, key=lambda p: p.get("timestamp", ""))
-            result[key] = latest["value"]
-    return result
+        return None, {}
+
+    by_hour: dict[datetime, dict] = {}
+    for key in METRIC_KEYS:
+        for p in data.get(key) or []:
+            if not isinstance(p, dict) or p.get("value") is None:
+                continue
+            ts = parse_ts(p.get("timestamp", ""))
+            if ts:
+                by_hour.setdefault(ts, {})[key] = p["value"]
+
+    now = datetime.now(timezone.utc)
+    complete = [h for h, m in by_hour.items()
+                if h + timedelta(hours=1) <= now and "plays" in m]
+    if not complete:
+        return None, {}
+    hour = max(complete)
+    return hour, by_hour[hour]
+
+
+def hour_label(hour_utc: datetime) -> str:
+    try:
+        tz = ZoneInfo(LOCAL_TZ)
+    except Exception:
+        tz = ZoneInfo("Europe/Kiev")
+    start = hour_utc.astimezone(tz)
+    end = start + timedelta(hours=1)
+    return f"{start:%H:%M}–{end:%H:%M} Kyiv"
 
 
 def send_discord(webhook: str, text: str, ping_user: str | None = None) -> None:
@@ -114,7 +147,7 @@ def run_report(webhook: str, code: str, result: str, details: str) -> None:
     lines = [f"📊 **Hourly report** — `{code}`", f"{icon} Status: **{result}** — {details}"]
 
     if result == "up":
-        m = last_hour_metrics(code)
+        hour, m = last_hour_metrics(code)
         labels = [
             ("uniquePlayers", "Unique players"),
             ("plays", "Plays"),
@@ -125,7 +158,10 @@ def run_report(webhook: str, code: str, result: str, details: str) -> None:
             ("recommendations", "Recommends"),
         ]
         stats = [f"{label}: **{fmt(m[k])}**" for k, label in labels if k in m]
-        lines.append("Last hour: " + " · ".join(stats) if stats else "Last hour: no stats yet")
+        if stats:
+            lines.append(f"Last hour ({hour_label(hour)}): " + " · ".join(stats))
+        else:
+            lines.append("Last hour: no stats yet")
 
     send_discord(webhook, "\n".join(lines))
 
