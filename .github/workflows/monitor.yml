@@ -1,8 +1,6 @@
 name: Pit monitor
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"   # every 30  min (~1440 billed min/month; GitHub may delay runs a bit)
   workflow_dispatch:          # "Run workflow" button
     inputs:
       test:
